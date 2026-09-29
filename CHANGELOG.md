@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Build with Zig 0.17 (master). The test, benchmark and tool steps are only
+  configured when the package is built on its own, so that depending on it does
+  not look up or run `toml-test` at configure time.
+
 ## [0.2.0] - 2026-03-04
 
 ### Added

@@ -12,20 +12,20 @@ const toml = @import("toml");
 
 const Error = Allocator.Error || fmt.BufPrintError || error{ InvalidDatetime, InvalidTomlValue };
 
-pub fn main() void {
-    run() catch {
+pub fn main(init: std.process.Init) void {
+    run(init.io) catch {
         std.process.exit(1);
         unreachable;
     };
 }
 
-fn run() !void {
+fn run(io: std.Io) !void {
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var stdin_buffer: [4096]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().readerStreaming(&stdin_buffer);
+    var stdin_reader = std.Io.File.stdin().readerStreaming(io, &stdin_buffer);
     const stdin = &stdin_reader.interface;
 
     const toml_bytes = try stdin.allocRemaining(allocator, .unlimited);
@@ -42,7 +42,7 @@ fn run() !void {
 
     const json_value = try createJsonValue(allocator, .{ .table = parsed.root });
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &stdout_buffer);
     var stdout = &stdout_writer.interface;
 
     try json.Stringify.value(json_value, .{}, stdout);
@@ -50,7 +50,7 @@ fn run() !void {
 }
 
 fn createJsonValue(allocator: Allocator, toml_value: toml.Value) Error!json.Value {
-    var obj_map = json.ObjectMap.init(allocator);
+    var obj_map: json.ObjectMap = .empty;
 
     const toml_table = switch (toml_value) {
         .table => |t| t,
@@ -58,7 +58,7 @@ fn createJsonValue(allocator: Allocator, toml_value: toml.Value) Error!json.Valu
     };
 
     for (toml_table.entries) |entry| {
-        try obj_map.put(try allocator.dupe(u8, entry.key), try objectFromValue(allocator, entry.value));
+        try obj_map.put(allocator, try allocator.dupe(u8, entry.key), try objectFromValue(allocator, entry.value));
     }
 
     return .{ .object = obj_map };
@@ -67,57 +67,57 @@ fn createJsonValue(allocator: Allocator, toml_value: toml.Value) Error!json.Valu
 fn objectFromValue(allocator: Allocator, toml_value: toml.Value) Error!json.Value {
     switch (toml_value) {
         .string => |s| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "string" });
-            try obj.put("value", .{ .string = try allocator.dupe(u8, s) });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "string" });
+            try obj.put(allocator, "value", .{ .string = try allocator.dupe(u8, s) });
             return .{ .object = obj };
         },
         .int => |i| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "integer" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "integer" });
             const s = try fmt.allocPrint(allocator, "{d}", .{i});
-            try obj.put("value", .{ .string = s });
+            try obj.put(allocator, "value", .{ .string = s });
             return .{ .object = obj };
         },
         .float => |f| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "float" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "float" });
             const s = try fmt.allocPrint(allocator, "{d}", .{f});
-            try obj.put("value", .{ .string = s });
+            try obj.put(allocator, "value", .{ .string = s });
             return .{ .object = obj };
         },
         .bool => |b| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "bool" });
-            try obj.put("value", .{ .string = if (b) "true" else "false" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "bool" });
+            try obj.put(allocator, "value", .{ .string = if (b) "true" else "false" });
             return .{ .object = obj };
         },
         .datetime => |dt| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "datetime" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "datetime" });
             const s = try fmt.allocPrint(allocator, "{f}", .{dt});
-            try obj.put("value", .{ .string = s });
+            try obj.put(allocator, "value", .{ .string = s });
             return .{ .object = obj };
         },
         .local_datetime => |dt| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "datetime-local" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "datetime-local" });
             const s = try fmt.allocPrint(allocator, "{f}", .{dt});
-            try obj.put("value", .{ .string = s });
+            try obj.put(allocator, "value", .{ .string = s });
             return .{ .object = obj };
         },
         .local_date => |d| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "date-local" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "date-local" });
             const s = try fmt.allocPrint(allocator, "{f}", .{d});
-            try obj.put("value", .{ .string = s });
+            try obj.put(allocator, "value", .{ .string = s });
             return .{ .object = obj };
         },
         .local_time => |t| {
-            var obj: json.ObjectMap = .init(allocator);
-            try obj.put("type", .{ .string = "time-local" });
+            var obj: json.ObjectMap = .empty;
+            try obj.put(allocator, "type", .{ .string = "time-local" });
             const s = try fmt.allocPrint(allocator, "{f}", .{t});
-            try obj.put("value", .{ .string = s });
+            try obj.put(allocator, "value", .{ .string = s });
             return .{ .object = obj };
         },
         .array => |arr| {
