@@ -22,7 +22,7 @@ const Options = struct {
     toml_test_path: []const u8,
     go_path: []const u8,
 
-    fmt_paths: []const []const u8,
+    fmt_paths: []const std.Build.LazyPath,
 
     benchmarks: []const []const u8,
     bench_data_path: []const u8,
@@ -124,7 +124,7 @@ pub fn build(b: *std.Build) void {
         ) orelse default_toml_test_timeout,
         .toml_test_path = b.pathJoin(&.{ "vendor", "toml-test" }),
         .go_path = b.pathJoin(&.{ "tools", ".go" }),
-        .fmt_paths = &.{"."},
+        .fmt_paths = b.allocator.dupe(std.Build.LazyPath, &.{b.path(".")}) catch @panic("OOM"),
         .benchmarks = blk: {
             const benchmarks_list = b.option([]const u8, "benchmarks", "A comma-separated list of benchmarks to run");
 
@@ -230,7 +230,11 @@ pub fn build(b: *std.Build) void {
         ) orelse 16,
     };
 
-    b.modules.put("toml", addTomlMod(b, options)) catch @panic("OOM");
+    b.modules.put(b.graph.arena, "toml", addTomlMod(b, options)) catch @panic("OOM");
+
+    // Looking up and running `toml-test` at configure time poisons the configuration
+    // cache, so do it only when this package is built on its own, not as a dependency.
+    if (!b.isRoot()) return;
 
     addGenerateBenchDataStep(b, options);
     addBenchmarkStep(b, options);
@@ -285,16 +289,16 @@ fn addTestTomlStep(b: *std.Build, test_step: *std.Build.Step, opts: Options) voi
 
     checkTomlTestVersion(b, step, opts);
 
-    inline for (std.meta.fields(toml.Version)) |field| {
-        const step_version = b.dupe(field.name);
+    inline for (@typeInfo(toml.Version).@"enum".field_names) |field_name| {
+        const step_version = b.allocator.dupe(u8, field_name) catch @panic("OOM");
         std.mem.replaceScalar(u8, step_version, '.', '-');
         const version_step = b.step(
             b.fmt("test-toml-{s}", .{step_version}),
-            b.fmt("Run the `toml-test` test suite against the library using TOML {s}", .{field.name}),
+            b.fmt("Run the `toml-test` test suite against the library using TOML {s}", .{field_name}),
         );
 
         const test_options = b.addOptions();
-        test_options.addOption([]const u8, "toml_version", field.name);
+        test_options.addOption([]const u8, "toml_version", field_name);
 
         const decoder = b.addExecutable(.{
             .name = "toml-decoder",
@@ -307,12 +311,12 @@ fn addTestTomlStep(b: *std.Build, test_step: *std.Build.Step, opts: Options) voi
         decoder.root_module.addOptions("test_options", test_options);
         decoder.root_module.addImport("toml", addTomlMod(b, opts));
 
-        const version_arg = if (std.mem.eql(u8, "1.1.0", field.name)) blk: {
+        const version_arg = if (std.mem.eql(u8, "1.1.0", field_name)) blk: {
             break :blk "1.1";
-        } else if (std.mem.eql(u8, "1.0.0", field.name)) blk: {
+        } else if (std.mem.eql(u8, "1.0.0", field_name)) blk: {
             break :blk "1.0";
         } else {
-            step.dependOn(&b.addFail(b.fmt("invalid TOML version: {s}", .{field.name})).step);
+            step.dependOn(&b.addFail(b.fmt("invalid TOML version: {s}", .{field_name})).step);
             return;
         };
         const run = b.addSystemCommand(&[_][]const u8{
@@ -332,19 +336,21 @@ fn addTestTomlStep(b: *std.Build, test_step: *std.Build.Step, opts: Options) voi
 }
 
 fn findTomlTestProgram(b: *std.Build, toml_test_step: *std.Build.Step, opts: Options) []const u8 {
-    return b.findProgram(&.{"toml-test"}, &.{opts.toml_test_path}) catch |err| switch (err) {
-        error.FileNotFound => {
-            toml_test_step.dependOn(&b.addFail(
-                "'toml-test' not found, consider running 'zig build fetch-toml-test' to install it locally",
-            ).step);
-            return "";
-        },
+    const local_path = b.root.joinString(
+        b.allocator,
+        b.pathJoin(&.{ opts.toml_test_path, "toml-test" }),
+    ) catch @panic("OOM");
+    return b.findProgram(.{ .names = &.{ local_path, "toml-test" } }) orelse {
+        toml_test_step.dependOn(&b.addFail(
+            "'toml-test' not found, consider running 'zig build fetch-toml-test' to install it locally",
+        ).step);
+        return "";
     };
 }
 
 fn checkTomlTestVersion(b: *std.Build, toml_test_step: *std.Build.Step, opts: Options) void {
     var code: u8 = undefined;
-    const out_untrimmed = b.runAllowFail(&.{ findTomlTestProgram(b, toml_test_step, opts), "version" }, &code, .Ignore) catch |err| {
+    const out_untrimmed = b.runAllowFail(&.{ findTomlTestProgram(b, toml_test_step, opts), "version" }, &code, .ignore) catch |err| {
         toml_test_step.dependOn(&b.addFail(
             b.fmt(
                 "'toml-test' not found, consider running 'zig build fetch-toml-test' to install it locally\nerror: {t}",

@@ -65,7 +65,7 @@ pub const Result = struct {
 };
 
 pub fn formatTime(ns: u64) [10]u8 {
-    var buf: [10]u8 = [_]u8{' '} ** 10;
+    var buf: [10]u8 = @splat(' ');
     if (ns < 1_000) {
         _ = std.fmt.bufPrint(&buf, "{d: >6}ns", .{ns}) catch unreachable;
     } else if (ns < 1_000_000) {
