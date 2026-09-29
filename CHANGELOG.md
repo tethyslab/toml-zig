@@ -18,6 +18,8 @@ and this project adheres to
 
 - Free the memory of the parsed tree when `toml.decode` fails. Previously the
   arena was leaked on every rejected document.
+- Fix `toml.Value.format`, which did not compile because it used `items` on an
+  array, which is a slice.
 
 ## [0.2.0] - 2026-03-04
 
